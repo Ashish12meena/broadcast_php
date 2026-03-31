@@ -5,7 +5,7 @@ import java.util.concurrent.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.annotation.EnableScheduling; // needed for @Scheduled in BatchCoordinatorService's cleanupEmptyQueues
+import org.springframework.scheduling.annotation.EnableScheduling; 
 
 import lombok.extern.slf4j.Slf4j;
 
