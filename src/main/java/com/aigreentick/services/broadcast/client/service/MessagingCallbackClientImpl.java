@@ -23,8 +23,7 @@ public class MessagingCallbackClientImpl implements MessagingCallbackClient {
 
     @Override
     public void reportResults(MessageResultCallbackRequest request) {
-        log.info("Reporting results to messaging service: campaignId={} phoneNumberId={} results={}",
-                request.getCampaignId(),
+        log.info("Reporting results to messaging service: phoneNumberId={} results={}",
                 request.getPhoneNumberId(),
                 request.getResults() != null ? request.getResults().size() : 0);
 
@@ -34,10 +33,10 @@ public class MessagingCallbackClientImpl implements MessagingCallbackClient {
                 .retrieve()
                 .toBodilessEntity()
                 .subscribe(
-                        response -> log.debug("Callback accepted: campaignId={} status={}",
-                                request.getCampaignId(), response.getStatusCode()),
-                        error -> log.error("Callback failed: campaignId={} error={}",
-                                request.getCampaignId(), error.getMessage())
+                        response -> log.debug("Callback accepted: phoneNumberId={} status={}",
+                                request.getPhoneNumberId(), response.getStatusCode()),
+                        error -> log.error("Callback failed: phoneNumberId={} error={}",
+                                request.getPhoneNumberId(), error.getMessage())
                 );
     }
 }

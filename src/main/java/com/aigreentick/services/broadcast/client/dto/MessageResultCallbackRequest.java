@@ -7,18 +7,18 @@ import java.util.List;
 
 /**
  * Request body sent to WhatsappMessage service's callback endpoint
- * after processing a window of recipients (up to 80).
+ * after processing a window of recipients (up to 50).
  *
  * POST /internal/broadcast/callbacks/message-results
  *
- * ADAPTED: Uses broadcastId + mobile instead of recipientId/messageId/contactId
- * to match WhatsappMessage service's report update needs.
+ * Each RecipientResult carries broadcastId + mobile — the two fields
+ * the messaging service uses to locate the correct report row.
+ * No campaignId needed: the report lookup is always by broadcastId + mobile.
  */
 @Data
 @Builder
 public class MessageResultCallbackRequest {
 
-    private Long campaignId;
     private String phoneNumberId;
     private List<RecipientResult> results;
 

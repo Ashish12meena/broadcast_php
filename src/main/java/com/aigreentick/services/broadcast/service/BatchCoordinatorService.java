@@ -24,14 +24,14 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Coordinates batch processing of broadcast messages.
  *
- * One PhoneQueue per phoneNumberId — single worker drains each queue sequentially,
- * sending windows of MAX_CONCURRENT_WHATSAPP_REQUESTS to Meta concurrently
- * and reporting results after every window.
+ * One PhoneQueue per phoneNumberId — a single worker drains each queue
+ * sequentially, sending windows of MAX_CONCURRENT_WHATSAPP_REQUESTS to
+ * Meta concurrently and reporting results after every window.
  *
- * ADAPTED from broadcast_kafka:
- *   - RecipientPayload now carries broadcastId + mobile (not recipientId/messageId/contactId)
- *   - Callback DTO maps broadcastId + mobile for report updates
- *   - All else identical: PhoneQueue, windowed sending, semaphores, graceful shutdown
+ * No campaignId anywhere: each recipient carries its own broadcastId,
+ * which is the only identifier needed for callback report updates.
+ * Concurrency is controlled purely by the PhoneQueue worker model —
+ * no semaphores needed.
  */
 @Slf4j
 @Service
@@ -67,8 +67,8 @@ public class BatchCoordinatorService {
 
     public void addBatch(BroadcastMessageEvent event, Acknowledgment acknowledgment) {
         if (shutdownRequested.get()) {
-            log.warn("Shutdown in progress — acknowledging without processing: campaignId={}",
-                    event.getCampaignId());
+            log.warn("Shutdown in progress — acknowledging without processing: phoneNumberId={}",
+                    event.getPhoneNumberId());
             acknowledgment.acknowledge();
             return;
         }
@@ -119,14 +119,13 @@ public class BatchCoordinatorService {
 
     private void processBatch(String phoneNumberId, QueuedBatch queued) {
         BroadcastMessageEvent event = queued.event();
-        long campaignId = event.getCampaignId();
         String accessToken = event.getAccessToken();
         List<RecipientPayload> recipients = event.getPayloads();
         int totalWindows = (int) Math.ceil((double) recipients.size() / WINDOW_SIZE);
         long batchStart = System.currentTimeMillis();
 
-        log.info("Processing batch: campaignId={} phoneNumberId={} recipients={} windows={}",
-                campaignId, phoneNumberId, recipients.size(), totalWindows);
+        log.info("Processing batch: phoneNumberId={} recipients={} windows={}",
+                phoneNumberId, recipients.size(), totalWindows);
 
         int totalSuccess = 0;
         int totalFailed = 0;
@@ -136,42 +135,41 @@ public class BatchCoordinatorService {
 
             for (int i = 0; i < windows.size(); i++) {
                 if (shutdownRequested.get()) {
-                    log.warn("Shutdown detected mid-batch: campaignId={} stoppingAtWindow={}/{}",
-                            campaignId, i + 1, totalWindows);
+                    log.warn("Shutdown detected mid-batch: phoneNumberId={} stoppingAtWindow={}/{}",
+                            phoneNumberId, i + 1, totalWindows);
                     break;
                 }
 
                 List<RecipientPayload> window = windows.get(i);
-                log.debug("Window {}/{}: campaignId={} phoneNumberId={} size={}",
-                        i + 1, totalWindows, campaignId, phoneNumberId, window.size());
+                log.debug("Window {}/{}: phoneNumberId={} size={}",
+                        i + 1, totalWindows, phoneNumberId, window.size());
 
-                List<RecipientResult> windowResults = sendWindow(phoneNumberId, accessToken, window, campaignId);
-                reportWindowResults(campaignId, phoneNumberId, windowResults);
+                List<RecipientResult> windowResults = sendWindow(phoneNumberId, accessToken, window);
+                reportWindowResults(phoneNumberId, windowResults);
 
                 long successCount = windowResults.stream().filter(RecipientResult::success).count();
                 totalSuccess += (int) successCount;
                 totalFailed += windowResults.size() - (int) successCount;
                 totalWindowsProcessed.incrementAndGet();
 
-                log.debug("Window {}/{} done: campaignId={} success={} failed={}",
-                        i + 1, totalWindows, campaignId, successCount,
+                log.debug("Window {}/{} done: phoneNumberId={} success={} failed={}",
+                        i + 1, totalWindows, phoneNumberId, successCount,
                         windowResults.size() - (int) successCount);
             }
 
             queued.acknowledgment().acknowledge();
-            log.debug("Kafka acknowledged: campaignId={}", campaignId);
+            log.debug("Kafka acknowledged: phoneNumberId={}", phoneNumberId);
 
             totalRecipientsProcessed.addAndGet(recipients.size());
             totalBatchesProcessed.incrementAndGet();
 
-            log.info("Batch complete: campaignId={} phoneNumberId={} duration={}ms success={} failed={}",
-                    campaignId, phoneNumberId, System.currentTimeMillis() - batchStart,
+            log.info("Batch complete: phoneNumberId={} duration={}ms success={} failed={}",
+                    phoneNumberId, System.currentTimeMillis() - batchStart,
                     totalSuccess, totalFailed);
 
         } catch (Exception e) {
-            log.error("Batch failed: campaignId={} phoneNumberId={} error={}",
-                    campaignId, phoneNumberId, e.getMessage(), e);
-            safeAcknowledge(queued, campaignId);
+            log.error("Batch failed: phoneNumberId={} error={}", phoneNumberId, e.getMessage(), e);
+            safeAcknowledge(queued, phoneNumberId);
         }
     }
 
@@ -180,14 +178,13 @@ public class BatchCoordinatorService {
     private List<RecipientResult> sendWindow(
             String phoneNumberId,
             String accessToken,
-            List<RecipientPayload> window,
-            long campaignId) {
+            List<RecipientPayload> window) {
 
         try {
             List<CompletableFuture<RecipientResult>> futures = new ArrayList<>(window.size());
             for (RecipientPayload recipient : window) {
                 futures.add(CompletableFuture.supplyAsync(
-                        () -> callMeta(recipient, phoneNumberId, accessToken, campaignId),
+                        () -> callMeta(recipient, phoneNumberId, accessToken),
                         whatsappExecutor));
             }
 
@@ -201,18 +198,17 @@ public class BatchCoordinatorService {
             return results;
 
         } catch (TimeoutException e) {
-            log.error("Window timed out: campaignId={} phoneNumberId={} windowSize={}",
-                    campaignId, phoneNumberId, window.size());
+            log.error("Window timed out: phoneNumberId={} windowSize={}", phoneNumberId, window.size());
             return buildErrorResults(window, "Window timeout after 60s");
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error("Window interrupted: campaignId={} phoneNumberId={}", campaignId, phoneNumberId);
+            log.error("Window interrupted: phoneNumberId={}", phoneNumberId);
             return buildErrorResults(window, "Interrupted");
 
         } catch (ExecutionException e) {
-            log.error("Window execution failed: campaignId={} phoneNumberId={} error={}",
-                    campaignId, phoneNumberId, e.getCause().getMessage());
+            log.error("Window execution failed: phoneNumberId={} error={}",
+                    phoneNumberId, e.getCause().getMessage());
             return buildErrorResults(window, e.getCause().getMessage());
         }
     }
@@ -222,8 +218,7 @@ public class BatchCoordinatorService {
     private RecipientResult callMeta(
             RecipientPayload recipient,
             String phoneNumberId,
-            String accessToken,
-            long campaignId) {
+            String accessToken) {
         try {
             MetaApiResponse response = whatsappClient.sendMessage(
                     recipient.getRequestPayload(),
@@ -258,8 +253,8 @@ public class BatchCoordinatorService {
                     recipient.getRequestPayload(), responseJson);
 
         } catch (Exception e) {
-            log.error("Meta API call failed: campaignId={} mobile={} phoneNumberId={} error={}",
-                    campaignId, recipient.getMobile(), phoneNumberId, e.getMessage());
+            log.error("Meta API call failed: mobile={} phoneNumberId={} error={}",
+                    recipient.getMobile(), phoneNumberId, e.getMessage());
             return RecipientResult.failure(
                     recipient.getBroadcastId(), recipient.getMobile(),
                     null, e.getMessage(),
@@ -270,7 +265,6 @@ public class BatchCoordinatorService {
     // ─── Window Callback ──────────────────────────────────────────────────────
 
     private void reportWindowResults(
-            long campaignId,
             String phoneNumberId,
             List<RecipientResult> results) {
 
@@ -289,7 +283,6 @@ public class BatchCoordinatorService {
                 .toList();
 
         MessageResultCallbackRequest request = MessageResultCallbackRequest.builder()
-                .campaignId(campaignId)
                 .phoneNumberId(phoneNumberId)
                 .results(callbackResults)
                 .build();
@@ -326,11 +319,11 @@ public class BatchCoordinatorService {
                 .toList();
     }
 
-    private void safeAcknowledge(QueuedBatch queued, long campaignId) {
+    private void safeAcknowledge(QueuedBatch queued, String phoneNumberId) {
         try {
             queued.acknowledgment().acknowledge();
         } catch (Exception e) {
-            log.error("Failed to acknowledge Kafka offset: campaignId={}", campaignId, e);
+            log.error("Failed to acknowledge Kafka offset: phoneNumberId={}", phoneNumberId, e);
         }
     }
 
@@ -401,24 +394,19 @@ public class BatchCoordinatorService {
 
         PhoneQueue(String phoneNumberId) { this.phoneNumberId = phoneNumberId; }
 
-        String getPhoneNumberId()        { return phoneNumberId; }
-        void enqueue(QueuedBatch b)      { queue.offer(b); }
-        QueuedBatch poll()               { return queue.poll(); }
-        boolean isEmpty()                { return queue.isEmpty(); }
-        int size()                       { return queue.size(); }
-        boolean isProcessing()           { return processing.get(); }
-        boolean tryStartProcessing()     { return processing.compareAndSet(false, true); }
-        boolean tryStopProcessing()      { return processing.compareAndSet(true, false); }
-        void forceStopProcessing()       { processing.set(false); }
+        String getPhoneNumberId()    { return phoneNumberId; }
+        void enqueue(QueuedBatch b)  { queue.offer(b); }
+        QueuedBatch poll()           { return queue.poll(); }
+        boolean isEmpty()            { return queue.isEmpty(); }
+        int size()                   { return queue.size(); }
+        boolean isProcessing()       { return processing.get(); }
+        boolean tryStartProcessing() { return processing.compareAndSet(false, true); }
+        boolean tryStopProcessing()  { return processing.compareAndSet(true, false); }
+        void forceStopProcessing()   { processing.set(false); }
     }
 
     private record QueuedBatch(BroadcastMessageEvent event, Acknowledgment acknowledgment) {}
 
-    /**
-     * ADAPTED: Uses broadcastId + mobile instead of recipientId/messageId/contactId.
-     * These fields pass through from Kafka event → Meta call → callback
-     * so the messaging service can locate the correct report row.
-     */
     private record RecipientResult(
             Long broadcastId,
             String mobile,
