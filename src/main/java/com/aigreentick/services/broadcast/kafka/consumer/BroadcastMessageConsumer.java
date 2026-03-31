@@ -30,7 +30,7 @@ public class BroadcastMessageConsumer {
     private final ObjectMapper objectMapper;
 
     @KafkaListener(
-            topics = "${kafka.topics.outbound-messages:whatsapp.messages.outbound}",
+            topics = "${kafka.topics.outbound-messages:whatsapp.broadcast.dispatch}",
             groupId = "${spring.kafka.consumer.group-id:broadcast-service}",
             containerFactory = "broadcastKafkaListenerFactory"
     )

@@ -33,7 +33,7 @@ public class WhatsappClientMockImpl implements WhatsappClient {
 
     @Override
     public MetaApiResponse sendMessage(String requestPayload, String phoneNumberId, String accessToken) {
-        long callNumber = totalCalls.incrementAndGet();
+        // long callNumber = totalCalls.incrementAndGet();
 
         try {
             // Simulate network delay
