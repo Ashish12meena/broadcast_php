@@ -1,12 +1,10 @@
-
 spring:
   application:
     name: broadcast-service
 
   profiles:
-    active: mock  # Change to 'default' for production (real Meta API calls)
+    active: mock
 
-  # ── Kafka Consumer Configuration ─────────────────────────────────────
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
 
@@ -17,12 +15,12 @@ spring:
       max-poll-records: 100
 
       properties:
-        max.poll.interval.ms: 600000        # 10 minutes
-        session.timeout.ms: 45000           # 45 seconds
-        heartbeat.interval.ms: 15000        # 15 seconds
+        max.poll.interval.ms: 600000
+        session.timeout.ms: 45000
+        heartbeat.interval.ms: 15000
         fetch.max.wait.ms: 500
         fetch.min.bytes: 1
-        fetch.max.bytes: 52428800           # 50MB max per fetch
+        fetch.max.bytes: 52428800
 
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
@@ -32,7 +30,6 @@ spring:
       type: single
       ack-mode: manual_immediate
 
-  # ── Jackson ──────────────────────────────────────────────────────────
   jackson:
     default-property-inclusion: non_null
     deserialization:
@@ -40,28 +37,19 @@ spring:
     serialization:
       write-dates-as-timestamps: false
 
-  # ── Graceful Shutdown ────────────────────────────────────────────────
   lifecycle:
     timeout-per-shutdown-phase: 60s
 
-# ── Kafka Topics ───────────────────────────────────────────────────────
+# ── Kafka Topics — must match exactly what WhatsappMessage service publishes to ──
 kafka:
   topics:
-    outbound-messages: whatsapp.broadcast.dispatch
-
-# ═══════════════════════════════════════════════════════════════════════
-#  META WHATSAPP CLOUD API
-# ═══════════════════════════════════════════════════════════════════════
+    outbound-messages: whatsapp.broadcast.dispatch   # plain string — matches @KafkaListener SpEL
 
 meta:
   api:
     base-url: https://graph.facebook.com/v23.0
     connect-timeout: 5000
     read-timeout: 30000
-
-# ═══════════════════════════════════════════════════════════════════════
-#  MESSAGING SERVICE (WhatsappMessage Service — callback target)
-# ═══════════════════════════════════════════════════════════════════════
 
 messaging:
   service:
@@ -71,37 +59,24 @@ messaging:
     paths:
       message-results-callback: /internal/broadcast/callbacks/message-results
 
-# ═══════════════════════════════════════════════════════════════════════
-#  CAMPAIGN / EXECUTOR / THREAD POOL CONFIG
-# ═══════════════════════════════════════════════════════════════════════
-
 campaign:
   max-concurrent-users: 100
   semaphore-cleanup-enabled: true
-
   executor:
     core-pool-size: 500
     max-pool-size: 2000
     queue-capacity: 10000
 
-# ═══════════════════════════════════════════════════════════════════════
-#  SERVER CONFIG
-# ═══════════════════════════════════════════════════════════════════════
-
 server:
   port: 8090
   shutdown: graceful
 
-# ═══════════════════════════════════════════════════════════════════════
-#  LOGGING
-# ═══════════════════════════════════════════════════════════════════════
-
 logging:
   level:
     root: INFO
-    com.aigreentick.services.broadcast: INFO
-    com.aigreentick.services.broadcast.service.BatchCoordinatorService: INFO
-    com.aigreentick.services.broadcast.kafka.consumer: INFO
+    com.aigreentick.services.broadcast: DEBUG          # ← DEBUG so you see partition assignment
+    com.aigreentick.services.broadcast.service.BatchCoordinatorService: DEBUG
+    com.aigreentick.services.broadcast.kafka.consumer: DEBUG
     com.aigreentick.services.broadcast.client.service: INFO
 
     org.apache.kafka: WARN
@@ -109,7 +84,7 @@ logging:
     org.apache.kafka.clients.producer.ProducerConfig: WARN
     org.apache.kafka.clients.consumer.internals: WARN
 
-    org.springframework.kafka: INFO
+    org.springframework.kafka: INFO                    # ← INFO so partition assignment log shows
     org.springframework.kafka.listener: INFO
 
     reactor.netty.http.client: WARN

@@ -12,15 +12,6 @@ import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Component;
 
-/**
- * Kafka consumer for outbound broadcast messages.
- *
- * Topic:   whatsapp.messages.outbound
- * Key:     wabaAccountId (= phoneNumberId)
- * Value:   JSON { campaignId, wabaAccountId, accessToken, payloads: [...] }
- *
- * Consumer deserializes and hands off to BatchCoordinatorService immediately.
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -47,8 +38,7 @@ public class BroadcastMessageConsumer {
         try {
             BroadcastMessageEvent event = objectMapper.readValue(rawMessage, BroadcastMessageEvent.class);
 
-            log.info("Parsed broadcast event: campaignId={} phoneNumberId={} recipients={}",
-                    event.getCampaignId(),
+            log.info("Parsed broadcast event: phoneNumberId={} recipients={}",
                     event.getPhoneNumberId(),
                     event.getPayloads() != null ? event.getPayloads().size() : 0);
 
@@ -57,7 +47,6 @@ public class BroadcastMessageConsumer {
         } catch (Exception e) {
             log.error("Failed to parse broadcast event: kafkaKey={} partition={} offset={} error={}",
                     kafkaKey, partition, offset, e.getMessage(), e);
-            // Ack to avoid infinite reprocessing of poison-pill
             acknowledgment.acknowledge();
         }
     }
